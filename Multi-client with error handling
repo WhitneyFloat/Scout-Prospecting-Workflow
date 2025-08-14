@@ -1,0 +1,138 @@
+{
+  "name": "Scout #2 - Multi Client (Error Handling)",
+  "nodes": [
+    {
+      "parameters": { "triggerTimes": { "item": [{ "hour": 9 }] } },
+      "id": "1",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "notes": "Runs daily at 9 AM."
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "table": "Clients",
+        "additionalFields": { "sort": [{ "field": "Client Name", "direction": "asc" }] }
+      },
+      "id": "1a",
+      "name": "Get Client Profiles",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [480, 120],
+      "notes": "Pulls client profile & voice from Airtable."
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            { "name": "url", "value": "https://feeds.simplecast.com/54nAGcIl" },
+            { "name": "url", "value": "https://feeds.megaphone.fm/ADV7475915107" },
+            { "name": "url", "value": "https://feeds.buzzsprout.com/868044.rss" }
+          ]
+        }
+      },
+      "id": "2",
+      "name": "Set Feed URLs",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": { "batchSize": 1 },
+      "id": "3",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [720, 300]
+    },
+    {
+      "parameters": { "url": "={{$json[\"url\"]}}" },
+      "id": "4",
+      "name": "RSS Feed Read",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {},
+      "id": "4a",
+      "name": "Continue On Fail",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [960, 480]
+    },
+    {
+      "parameters": {},
+      "id": "5",
+      "name": "Split Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [1200, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const seen = new Set();\nreturn items.filter(item => {\n  const url = item.json.link;\n  if (seen.has(url)) return false;\n  seen.add(url);\n  return true;\n});"
+      },
+      "id": "6",
+      "name": "Deduplicate by URL",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": { "functionCode": "return items.slice(0, 20);" },
+      "id": "7",
+      "name": "Limit to 20",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [1680, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.openai.com/v1/chat/completions",
+        "sendBody": true,
+        "jsonBody": "={{ {\n  model: 'gpt-4o-mini',\n  messages: [\n    { role: 'system', content: 'You are an assistant that scores media opportunities for relevance to the client profile and tags them as Free or Paid.' },\n    { role: 'user', content: `Client Profile: ${$item(0).$node[\"Get Client Profiles\"].json[\"Client Profile\"]} Voice Profile: ${$item(0).$node[\"Get Client Profiles\"].json[\"Voice Profile\"]} Score each item from 0-100, provide Free/Paid tag, and a 1-2 sentence AI justification. Item: ${$json.title} - ${$json.link}` }\n  ],\n  max_tokens: 200\n} }}",
+        "headerParametersJson": "={{ {\"Content-Type\":\"application/json\",\"Authorization\":\"Bearer YOUR_OPENAI_API_KEY\"} }}"
+      },
+      "id": "8",
+      "name": "GPT Scoring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1920, 300]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "table": "Media Opportunities",
+        "fields": {
+          "Opportunity": "={{$json.title}}",
+          "Media Type": "={{$json[\"mediaType\"] || 'Podcast'}}",
+          "Source Fee": "={{$json.sourceFee}}",
+          "Media Description": "={{$json.contentSnippet || ''}}",
+          "URL": "={{$json.link}}",
+          "RSS Feed URL": "={{$json.feedUrl}}",
+          "Relevance Score": "={{$json.relevanceScore}}",
+          "AI Justification": "={{$json.aiJustification}}",
+          "Status": "Discovered"
+        }
+      },
+      "id": "9",
+      "name": "Push to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 2,
+      "position": [2160, 300]
+    }
+  ],
+  "connections": {
+    "Cron Trigger": { "main": [[{ "node": "Set Feed URLs", "type": "main", "index": 0 }, { "node": "Get Client Profiles", "type": "main", "index": 0 }]] },
+    "Set Feed URLs": { "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]] },
+    "Split In Batches": { "main": [[{ "node": "RSS Feed Read", "type": "main", "index": 0 }], [{ "node": "Continue On Fail", "type": "main", "index": 0 }]] },
+    "RSS Feed Read": { "main": [[{ "node": "Split Items", "type": "main", "index": 0 }]] },
+    "Split Items": { "main": [[{ "node": "Deduplicate by URL", "type": "main", "index": 0 }]] },
+    "Deduplicate by URL": { "main": [[{ "node": "Limit to 20", "type": "main", "index": 0 }]] },
+    "Limit to 20": { "main": [[{ "node": "GPT Scoring", "type": "main", "index": 0 }]] },
+    "GPT Scoring": { "main": [[{ "node": "Push to Airtable", "type": "main", "index": 0 }]] }
+  }
+}
